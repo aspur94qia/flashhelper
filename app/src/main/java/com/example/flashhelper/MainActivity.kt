@@ -31,8 +31,9 @@ class MainActivity : AppCompatActivity() {
                 i.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice::class.java)
             else @Suppress("DEPRECATION") i.getParcelableExtra(UsbManager.EXTRA_DEVICE)
             if (dev != null && i.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)) {
-                if (pendingAutoDevice != null) { autoFlow(dev); pendingAutoDevice = null }
-                else runHandshake(dev)
+                val target = pendingAutoDevice
+                pendingAutoDevice = null
+                if (target != null) autoFlow(dev) else log("Izin diberikan, tapi tidak ada aksi tertunda.")
             } else log("Izin USB ditolak")
         }
     }
@@ -51,35 +52,30 @@ class MainActivity : AppCompatActivity() {
             setPadding(pad, pad, pad, pad)
         }
 
-        root.addView(section("FLASH LEWAT OTG (tahap 2: info chip)"))
+        root.addView(section("FLASH LEWAT OTG"))
         root.addView(TextView(this).apply {
-            text = "Colok HP target (yang MATI) ke HP ini lewat kabel OTG sambil menahan " +
-                "tombol Volume sesuai model, lalu tekan tombol di bawah."
+            text = "Colok HP TARGET (yang MATI) ke HP ini lewat kabel OTG sambil menahan " +
+                "tombol Volume sesuai model target, lalu tekan tombol di bawah. " +
+                "Hasil deteksi & log akan muncul di bawah tombol."
             textSize = 13f
         })
         root.addView(Button(this).apply {
-            text = "Cari HP MediaTek & tes handshake"
-            setOnClickListener { scan() }
+            text = "JALANKAN OTOMATIS (deteksi + handshake + upload DA)"
+            setOnClickListener { runAuto() }
         })
-                root.addView(Button(this).apply {
-            text = "Upload DA ke RAM (tahap 3)"
-            setOnClickListener { uploadDa() }
-        })
-
-                root.addView(Button(this).apply {
+        root.addView(Button(this).apply {
             text = "Tulis partisi (terkunci, lihat log)"
             setOnClickListener { writePartitionLocked() }
         })
-
         logView = TextView(this).apply { textSize = 13f; setTextIsSelectable(true) }
         root.addView(logView)
 
-        root.addView(section("INFO PERANGKAT INI"))
+        root.addView(section("INFO HP INI (bukan HP target OTG)"))
         root.addView(TextView(this).apply {
             text = deviceInfo(); textSize = 14f; setTextIsSelectable(true)
         })
         root.addView(Button(this).apply {
-            text = "Salin info"
+            text = "Salin info HP ini"
             setOnClickListener { copy(deviceInfo()) }
         })
 
@@ -96,53 +92,13 @@ class MainActivity : AppCompatActivity() {
         super.onDestroy()
     }
 
-    private fun scan() {
-        val dev = MtkUsb.find(this)
-        if (dev == null) { log("Tidak ada perangkat MediaTek terdeteksi. Cek kabel OTG & mode BROM."); return }
-        log(MtkUsb.describe(dev))
-        val mgr = getSystemService(Context.USB_SERVICE) as UsbManager
-        if (mgr.hasPermission(dev)) { runHandshake(dev); return }
-        val flags = if (Build.VERSION.SDK_INT >= 31) PendingIntent.FLAG_MUTABLE else 0
-        val pi = PendingIntent.getBroadcast(
-            this, 0, Intent(MtkUsb.ACTION_PERM).setPackage(packageName), flags
-        )
-        mgr.requestPermission(dev, pi)
-    }
-
-    private fun uploadDa() {
-        val dev = MtkUsb.find(this)
-        if (dev == null) { log("HP MediaTek tidak terdeteksi."); return }
-        thread {
-            val logSb = StringBuilder()
-            try {
-                val mgr = getSystemService(Context.USB_SERVICE) as UsbManager
-                val conn = mgr.openDevice(dev)
-                if (conn == null) { runOnUiThread { log("Gagal buka USB") }; return@thread }
-                val da = DaLoader.readAsset(this, "da.bin")
-                logSb.appendLine("DA dimuat: ${da.size} byte")
-                val regions = DaLoader.parseRegions(da)
-                val addr = regions?.firstOrNull()?.loadAddr ?: DaLoader.DEFAULT_LOAD_ADDR
-                val sigLen = regions?.firstOrNull()?.sigLength ?: 0
-                logSb.appendLine("Load address dipakai: 0x%06X".format(addr))
-                runOnUiThread { log(logSb.toString()) }
-                // Catatan: pengiriman sesi BROM dipakai ulang dari handshake sebelumnya
-                // Untuk versi ini, jalankan handshake + sendDa dalam satu alur:
-                val ok = MtkUsb.runSendDa(this, dev, addr, da, sigLen, logSb)
-                runOnUiThread { log(logSb.toString()); if (ok) log("Selesai tahap 3.") }
-            } catch (e: Exception) {
-                logSb.appendLine("Error: ${e.message}")
-                runOnUiThread { log(logSb.toString()) }
-            }
-        }
-    }
-
-        private fun runAuto() {
+    private fun runAuto() {
         logView.text = ""
-        log("Mencari HP MediaTek...")
+        log("Mencari HP MediaTek lewat OTG...")
         thread {
             val dev = MtkUsb.find(this)
             if (dev == null) {
-                runOnUiThread { log("Tidak ada HP MediaTek terdeteksi. Cek kabel OTG & mode BROM.") }
+                runOnUiThread { log("Tidak ada HP MediaTek terdeteksi. Cek kabel OTG & pastikan HP target dalam mode BROM.") }
                 return@thread
             }
             runOnUiThread { log(MtkUsb.describe(dev)) }
@@ -166,7 +122,7 @@ class MainActivity : AppCompatActivity() {
             val logSb = StringBuilder()
             try {
                 val da = DaLoader.readAsset(this, "da.bin")
-                logSb.appendLine("DA dimuat: ${da.size} byte")
+                logSb.appendLine("DA dimuat dari aset: ${da.size} byte")
                 val regions = DaLoader.parseRegions(da)
                 val addr = regions?.firstOrNull()?.loadAddr ?: DaLoader.DEFAULT_LOAD_ADDR
                 val sigLen = regions?.firstOrNull()?.sigLength ?: 0
@@ -184,29 +140,10 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-        private fun writePartitionLocked() {
-        // TERKUNCI SEMENTARA.
-        // Alasan: protokol kirim-data ke partisi (beda dari SEND_DA) baru bisa
-        // dipastikan benar setelah tahap 2 (upload DA) terbukti sukses di HP
-        // target. Menyalakan ini sebelum itu berisiko merusak partisi secara
-        // permanen jika framing datanya salah.
-        log("Fitur tulis partisi belum diaktifkan. Buktikan dulu tombol OTOMATIS " +
-            "sampai muncul 'DA aktif di RAM', lalu kirim log-nya untuk saya aktifkan ini.")
+    private fun writePartitionLocked() {
+        log("Fitur tulis partisi belum diaktifkan. Buktikan dulu tombol OTOMATIS sampai " +
+            "muncul 'DA aktif di RAM', lalu kirim log-nya supaya fitur ini diaktifkan.")
     }
-
-    private fun rebootDevice() {
-        log("Fitur reboot akan diaktifkan bersamaan dengan fitur tulis partisi.")
-    }
-
-        private fun runHandshake(dev: UsbDevice) {
-        log("Menjalankan handshake...")
-        thread {
-            val r = try { MtkUsb.inspect(this, dev) } catch (e: Exception) { "Error: ${e.message}" }
-            runOnUiThread { log(r) }
-        }
-    }
-
-    private fun log(s: String) { logView.text = "${logView.text}\n$s".trim() }
 
     private fun deviceInfo(): String = """
         Merek    : ${Build.MANUFACTURER}
@@ -229,6 +166,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun toast(s: String) = Toast.makeText(this, s, Toast.LENGTH_SHORT).show()
+
+    private fun log(s: String) { logView.text = "${logView.text}\n$s".trim() }
 
     companion object {
         const val CHECKLIST = """
