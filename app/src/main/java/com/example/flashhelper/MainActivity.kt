@@ -49,7 +49,7 @@ class MainActivity : AppCompatActivity() {
             setPadding(pad, pad, pad, pad)
         }
 
-        root.addView(section("FLASH LEWAT OTG (tahap 1: deteksi + handshake)"))
+        root.addView(section("FLASH LEWAT OTG (tahap 2: info chip)"))
         root.addView(TextView(this).apply {
             text = "Colok HP target (yang MATI) ke HP ini lewat kabel OTG sambil menahan " +
                 "tombol Volume sesuai model, lalu tekan tombol di bawah."
@@ -100,7 +100,7 @@ class MainActivity : AppCompatActivity() {
     private fun runHandshake(dev: UsbDevice) {
         log("Menjalankan handshake...")
         thread {
-            val r = try { MtkUsb.handshake(this, dev) } catch (e: Exception) { "Error: ${e.message}" }
+            val r = try { MtkUsb.inspect(this, dev) } catch (e: Exception) { "Error: ${e.message}" }
             runOnUiThread { log(r) }
         }
     }
