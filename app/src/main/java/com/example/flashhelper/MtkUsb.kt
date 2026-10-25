@@ -95,6 +95,59 @@ object MtkUsb {
             return if (st == 0) listOf(sub, ver, sw) else null
         }
 
+        fun sendDa(loadAddr: Long, da: ByteArray, sigLen: Int, log: StringBuilder): Boolean {
+            // CMD 0xD7 = SEND_DA
+            if (!echo(0xD7)) { log.appendLine("SEND_DA ditolak"); return false }
+            fun w32(v: Long) {
+                write(byteArrayOf(
+                    ((v shr 24) and 0xFF).toByte(),
+                    ((v shr 16) and 0xFF).toByte(),
+                    ((v shr 8) and 0xFF).toByte(),
+                    (v and 0xFF).toByte()
+                ))
+            }
+            w32(loadAddr)
+            w32(da.size.toLong())
+            w32(sigLen.toLong())
+            val st1 = rword()
+            if (st1 != 0) { log.appendLine("SEND_DA setup gagal, status=$st1"); return false }
+
+            var sent = 0
+            var checksum = 0
+            val chunk = 1024
+            while (sent < da.size) {
+                val n = minOf(chunk, da.size - sent)
+                val part = da.copyOfRange(sent, sent + n)
+                if (!write(part)) { log.appendLine("Gagal kirim data di offset $sent"); return false }
+                for (b in part) checksum = checksum xor (b.toInt() and 0xFF)
+                sent += n
+                if (sent % (64 * 1024) < chunk) log.appendLine("Terkirim: $sent / ${da.size} byte")
+            }
+            val devChecksum = rword()
+            log.appendLine("Checksum lokal=0x%02X, perangkat=0x%04X".format(checksum, devChecksum ?: -1))
+            val st2 = rword()
+            if (st2 != 0) { log.appendLine("SEND_DA selesai dengan status error=$st2"); return false }
+            log.appendLine("SEND_DA berhasil")
+            return true
+        }
+
+        fun jumpDa(addr: Long, log: StringBuilder): Boolean {
+            // CMD 0xD5 = JUMP_DA
+            if (!echo(0xD5)) { log.appendLine("JUMP_DA ditolak"); return false }
+            fun w32(v: Long) {
+                write(byteArrayOf(
+                    ((v shr 24) and 0xFF).toByte(),
+                    ((v shr 16) and 0xFF).toByte(),
+                    ((v shr 8) and 0xFF).toByte(),
+                    (v and 0xFF).toByte()
+                ))
+            }
+            w32(addr)
+            val st = rword()
+            return if (st == 0) { log.appendLine("JUMP_DA berhasil, DA sekarang aktif"); true }
+            else { log.appendLine("JUMP_DA gagal, status=$st"); false }
+        }
+
         fun getTargetConfig(): Long? {
             if (!echo(0xD8)) return null
             val cfg = rdword() ?: return null
@@ -103,7 +156,40 @@ object MtkUsb {
         }
     }
 
-    /** Jalankan di background thread. */
+    fun runSendDa(
+        ctx: Context, dev: UsbDevice, loadAddr: Long, da: ByteArray, sigLen: Int, log: StringBuilder
+    ): Boolean {
+        val mgr = ctx.getSystemService(Context.USB_SERVICE) as UsbManager
+        val conn = mgr.openDevice(dev) ?: run { log.appendLine("Gagal buka USB"); return false }
+        try {
+            var s: Session? = null
+            for (i in 0 until dev.interfaceCount) {
+                val itf = dev.getInterface(i)
+                var tIn: UsbEndpoint? = null
+                var tOut: UsbEndpoint? = null
+                for (e in 0 until itf.endpointCount) {
+                    val ep = itf.getEndpoint(e)
+                    if (ep.type == UsbConstants.USB_ENDPOINT_XFER_BULK) {
+                        if (ep.direction == UsbConstants.USB_DIR_IN) tIn = ep else tOut = ep
+                    }
+                }
+                if (tIn != null && tOut != null) {
+                    if (!conn.claimInterface(itf, true)) { log.appendLine("Gagal claim interface"); return false }
+                    s = Session(conn, tIn, tOut)
+                    break
+                }
+            }
+            if (s == null) { log.appendLine("Endpoint bulk tidak ditemukan"); return false }
+            if (!s.handshake()) { log.appendLine("Handshake gagal"); return false }
+            log.appendLine("Handshake OK")
+            if (!s.sendDa(loadAddr, da, sigLen, log)) return false
+            return s.jumpDa(loadAddr, log)
+        } finally {
+            conn.close()
+        }
+    }
+
+        /** Jalankan di background thread. */
     fun inspect(ctx: Context, dev: UsbDevice): String {
         val mgr = ctx.getSystemService(Context.USB_SERVICE) as UsbManager
         val conn = mgr.openDevice(dev) ?: return "Gagal membuka perangkat USB"

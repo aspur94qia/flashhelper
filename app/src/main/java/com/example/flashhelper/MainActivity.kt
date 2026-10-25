@@ -59,6 +59,11 @@ class MainActivity : AppCompatActivity() {
             text = "Cari HP MediaTek & tes handshake"
             setOnClickListener { scan() }
         })
+                root.addView(Button(this).apply {
+            text = "Upload DA ke RAM (tahap 3)"
+            setOnClickListener { uploadDa() }
+        })
+
         logView = TextView(this).apply { textSize = 13f; setTextIsSelectable(true) }
         root.addView(logView)
 
@@ -97,7 +102,34 @@ class MainActivity : AppCompatActivity() {
         mgr.requestPermission(dev, pi)
     }
 
-    private fun runHandshake(dev: UsbDevice) {
+    private fun uploadDa() {
+        val dev = MtkUsb.find(this)
+        if (dev == null) { log("HP MediaTek tidak terdeteksi."); return }
+        thread {
+            val logSb = StringBuilder()
+            try {
+                val mgr = getSystemService(Context.USB_SERVICE) as UsbManager
+                val conn = mgr.openDevice(dev)
+                if (conn == null) { runOnUiThread { log("Gagal buka USB") }; return@thread }
+                val da = DaLoader.readAsset(this, "da.bin")
+                logSb.appendLine("DA dimuat: ${da.size} byte")
+                val regions = DaLoader.parseRegions(da)
+                val addr = regions?.firstOrNull()?.loadAddr ?: DaLoader.DEFAULT_LOAD_ADDR
+                val sigLen = regions?.firstOrNull()?.sigLength ?: 0
+                logSb.appendLine("Load address dipakai: 0x%06X".format(addr))
+                runOnUiThread { log(logSb.toString()) }
+                // Catatan: pengiriman sesi BROM dipakai ulang dari handshake sebelumnya
+                // Untuk versi ini, jalankan handshake + sendDa dalam satu alur:
+                val ok = MtkUsb.runSendDa(this, dev, addr, da, sigLen, logSb)
+                runOnUiThread { log(logSb.toString()); if (ok) log("Selesai tahap 3.") }
+            } catch (e: Exception) {
+                logSb.appendLine("Error: ${e.message}")
+                runOnUiThread { log(logSb.toString()) }
+            }
+        }
+    }
+
+        private fun runHandshake(dev: UsbDevice) {
         log("Menjalankan handshake...")
         thread {
             val r = try { MtkUsb.inspect(this, dev) } catch (e: Exception) { "Error: ${e.message}" }
