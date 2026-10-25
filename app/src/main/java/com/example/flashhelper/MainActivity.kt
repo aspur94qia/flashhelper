@@ -66,6 +66,11 @@ class MainActivity : AppCompatActivity() {
             setOnClickListener { uploadDa() }
         })
 
+                root.addView(Button(this).apply {
+            text = "Tulis partisi (terkunci, lihat log)"
+            setOnClickListener { writePartitionLocked() }
+        })
+
         logView = TextView(this).apply { textSize = 13f; setTextIsSelectable(true) }
         root.addView(logView)
 
@@ -177,6 +182,20 @@ class MainActivity : AppCompatActivity() {
                 runOnUiThread { log(logSb.toString()) }
             }
         }
+    }
+
+        private fun writePartitionLocked() {
+        // TERKUNCI SEMENTARA.
+        // Alasan: protokol kirim-data ke partisi (beda dari SEND_DA) baru bisa
+        // dipastikan benar setelah tahap 2 (upload DA) terbukti sukses di HP
+        // target. Menyalakan ini sebelum itu berisiko merusak partisi secara
+        // permanen jika framing datanya salah.
+        log("Fitur tulis partisi belum diaktifkan. Buktikan dulu tombol OTOMATIS " +
+            "sampai muncul 'DA aktif di RAM', lalu kirim log-nya untuk saya aktifkan ini.")
+    }
+
+    private fun rebootDevice() {
+        log("Fitur reboot akan diaktifkan bersamaan dengan fitur tulis partisi.")
     }
 
         private fun runHandshake(dev: UsbDevice) {
