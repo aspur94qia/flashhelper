@@ -19,7 +19,7 @@ jobs:
       - name: Ambil file DA & Auth saja
         run: |
           mkdir -p extracted
-          grep -iE "\.auth$|_da\.bin$|allinone.*\.bin$" filelist.txt | awk '{print $4}' > matches.txt
+          grep -iE "all-in-one-signature\.bin$|preloader_.*\.bin$" filelist.txt | awk '{print $4}' > matches.txt
           cat matches.txt
           if [ ! -s matches.txt ]; then
             echo "Tidak ada file DA/Auth yang cocok, cek filelist.txt manual" 
