@@ -11,7 +11,7 @@ jobs:
         run: pip install gdown
 
       - name: Download firmware zip dari Google Drive
-        run: gdown --id 13cef3Xup_q6V8yLjojGfVMnbR4W433BY -O firmware.zip
+        run: gdown "https://drive.google.com/uc?id=13cef3Xup_q6V8yLjojGfVMnbR4W433BY" -O firmware.zip
 
       - name: Daftar isi zip (debug)
         run: unzip -l firmware.zip | tee filelist.txt
