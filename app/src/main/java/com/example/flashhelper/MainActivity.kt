@@ -23,6 +23,7 @@ import kotlin.concurrent.thread
 class MainActivity : AppCompatActivity() {
 
     private lateinit var logView: TextView
+    private var pendingAutoDevice: UsbDevice? = null
 
     private val permReceiver = object : BroadcastReceiver() {
         override fun onReceive(c: Context, i: Intent) {
@@ -30,7 +31,8 @@ class MainActivity : AppCompatActivity() {
                 i.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice::class.java)
             else @Suppress("DEPRECATION") i.getParcelableExtra(UsbManager.EXTRA_DEVICE)
             if (dev != null && i.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)) {
-                runHandshake(dev)
+                if (pendingAutoDevice != null) { autoFlow(dev); pendingAutoDevice = null }
+                else runHandshake(dev)
             } else log("Izin USB ditolak")
         }
     }
@@ -122,6 +124,54 @@ class MainActivity : AppCompatActivity() {
                 // Untuk versi ini, jalankan handshake + sendDa dalam satu alur:
                 val ok = MtkUsb.runSendDa(this, dev, addr, da, sigLen, logSb)
                 runOnUiThread { log(logSb.toString()); if (ok) log("Selesai tahap 3.") }
+            } catch (e: Exception) {
+                logSb.appendLine("Error: ${e.message}")
+                runOnUiThread { log(logSb.toString()) }
+            }
+        }
+    }
+
+        private fun runAuto() {
+        logView.text = ""
+        log("Mencari HP MediaTek...")
+        thread {
+            val dev = MtkUsb.find(this)
+            if (dev == null) {
+                runOnUiThread { log("Tidak ada HP MediaTek terdeteksi. Cek kabel OTG & mode BROM.") }
+                return@thread
+            }
+            runOnUiThread { log(MtkUsb.describe(dev)) }
+
+            val mgr = getSystemService(Context.USB_SERVICE) as UsbManager
+            if (mgr.hasPermission(dev)) {
+                autoFlow(dev)
+            } else {
+                val flags = if (Build.VERSION.SDK_INT >= 31) PendingIntent.FLAG_MUTABLE else 0
+                val pi = PendingIntent.getBroadcast(
+                    this, 0, Intent(MtkUsb.ACTION_PERM).setPackage(packageName), flags
+                )
+                pendingAutoDevice = dev
+                mgr.requestPermission(dev, pi)
+            }
+        }
+    }
+
+    private fun autoFlow(dev: UsbDevice) {
+        thread {
+            val logSb = StringBuilder()
+            try {
+                val da = DaLoader.readAsset(this, "da.bin")
+                logSb.appendLine("DA dimuat: ${da.size} byte")
+                val regions = DaLoader.parseRegions(da)
+                val addr = regions?.firstOrNull()?.loadAddr ?: DaLoader.DEFAULT_LOAD_ADDR
+                val sigLen = regions?.firstOrNull()?.sigLength ?: 0
+                logSb.appendLine("Load address dipakai: 0x%06X".format(addr))
+                runOnUiThread { log(logSb.toString()) }
+                val ok = MtkUsb.runSendDa(this, dev, addr, da, sigLen, logSb)
+                runOnUiThread {
+                    log(logSb.toString())
+                    log(if (ok) "SELESAI: DA aktif di RAM." else "GAGAL di salah satu langkah, lihat log di atas.")
+                }
             } catch (e: Exception) {
                 logSb.appendLine("Error: ${e.message}")
                 runOnUiThread { log(logSb.toString()) }
