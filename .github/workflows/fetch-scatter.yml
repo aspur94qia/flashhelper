@@ -1,0 +1,33 @@
+name: Fetch Scatter file
+
+on:
+  workflow_dispatch:
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install gdown
+        run: pip install gdown
+
+      - name: Download firmware zip dari Google Drive
+        run: gdown "https://drive.google.com/uc?id=13cef3Xup_q6V8yLjojGfVMnbR4W433BY" -O firmware.zip
+
+      - name: Ambil file scatter saja
+        run: |
+          mkdir -p extracted
+          unzip -l firmware.zip > filelist.txt
+          grep -i "scatter.*\.txt$" filelist.txt | awk '{print $4}' > matches.txt
+          cat matches.txt
+          while IFS= read -r f; do
+            [ -z "$f" ] && continue
+            unzip -p firmware.zip "$f" > "extracted/$(basename "$f")"
+          done < matches.txt
+
+      - name: Hapus zip besar
+        run: rm -f firmware.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vivo-scatter-file
+          path: extracted/
